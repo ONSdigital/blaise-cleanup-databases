@@ -92,8 +92,9 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
         ip_type="public",
     )
     assert cursor.fetchall.call_count == 3
-    assert capsys.readouterr().out.count("matching rows (2)") == 3
-    assert "{'RecordId': 1}" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert output.count("matching rows (2)") == 3
+    assert "{'RecordId': 1}" in output
     connection.commit.assert_not_called()
     connection.close.assert_called_once()
 
