@@ -1,50 +1,71 @@
-import sys
 from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-sys.modules.setdefault("pymysql", MagicMock())
-
-import main  # noqa: E402
+import main
 
 
-def test_installed_questionnaires_rejects_empty_list(monkeypatch):
-    response = MagicMock()
-    response.json.return_value = {"questionnaires": []}
-    monkeypatch.setenv("QUESTIONNAIRES_URL", "https://example.invalid/questionnaires")
-    monkeypatch.setattr(main.requests, "get", MagicMock(return_value=response))
-
-    with pytest.raises(ValueError, match="no installed questionnaires"):
-        main.installed_questionnaires()
+def _set_database_environment(monkeypatch):
+    monkeypatch.setenv("PROJECT_ID", "test-project")
+    monkeypatch.setenv("SQL_REGION", "europe-west2")
+    monkeypatch.setenv("SQL_INSTANCE_NAME", "test-instance")
+    monkeypatch.setenv("DATABASE_USER", "cleanup-service-account")
 
 
-def test_installed_questionnaires_reads_names(monkeypatch):
-    response = MagicMock()
-    response.json.return_value = {"questionnaires": [{"name": "SurveyA"}, "SurveyB"]}
-    monkeypatch.setenv("QUESTIONNAIRES_URL", "https://example.invalid/questionnaires")
-    get = MagicMock(return_value=response)
-    monkeypatch.setattr(main.requests, "get", get)
+def _mock_connector(monkeypatch, cursor):
+    connection = MagicMock()
+    connection.cursor.return_value.__enter__.return_value = cursor
+    connector = MagicMock()
+    connector.connect.return_value = connection
+    context = MagicMock()
+    context.__enter__.return_value = connector
+    monkeypatch.setattr(main, "_create_cloud_sql_connector", lambda: context)
+    return connector, connection
 
-    assert main.installed_questionnaires() == {"SurveyA", "SurveyB"}
-    get.assert_called_once_with(
-        "https://example.invalid/questionnaires", headers={}, timeout=15
+
+def test_installed_questionnaire_guids_uses_blaise_service(monkeypatch):
+    service = MagicMock()
+    service.get_guid_of_questionnaire_in_blaise.return_value = ["guid-a"]
+    service_factory = MagicMock(return_value=service)
+    config = MagicMock()
+    config_factory = MagicMock(return_value=config)
+    monkeypatch.setattr(main, "BlaiseService", service_factory)
+    monkeypatch.setattr(main.BlaiseConfig, "from_env", config_factory)
+
+    assert main.installed_questionnaire_guids() == {"guid-a"}
+
+    config_factory.assert_called_once_with()
+    service_factory.assert_called_once_with(config)
+    service.get_guid_of_questionnaire_in_blaise.assert_called_once_with()
+
+
+def test_cloud_sql_connector_enables_iam_auth(monkeypatch):
+    connector_class = MagicMock()
+    module = MagicMock(Connector=connector_class)
+    importer = MagicMock(return_value=module)
+    monkeypatch.setattr(main, "import_module", importer)
+
+    main._create_cloud_sql_connector()
+
+    importer.assert_called_once_with("google.cloud.sql.connector")
+    connector_class.assert_called_once_with(
+        enable_iam_auth=True,
+        refresh_strategy="lazy",
     )
 
 
-def test_cleanup_tables_filters_age_and_installed_questionnaires(monkeypatch):
+def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
+    _set_database_environment(monkeypatch)
     cursor = MagicMock()
-    cursor.rowcount = 2
-    connection = MagicMock()
-    connection.cursor.return_value.__enter__.return_value = cursor
-    monkeypatch.setattr(main.pymysql, "connect", MagicMock(return_value=connection))
-    monkeypatch.setenv("DATABASE_USER", "test")
-    monkeypatch.setenv("DATABASE_PASSWORD", "test")
+    cursor.description = (("RecordId",),)
+    cursor.fetchall.return_value = [(1,), (2,)]
+    connector, connection = _mock_connector(monkeypatch, cursor)
     cutoff = datetime(2026, 7, 4)
 
-    deleted = main.cleanup_tables({"SurveyB", "SurveyA"}, cutoff)
+    previewed = main.cleanup_tables({"guid-b", "guid-a"}, cutoff)
 
-    assert deleted == {
+    assert previewed == {
         "CMA_Logging_Form": 2,
         "CMA_Launcher_Form": 2,
         "CMA_Attempts_Form": 2,
@@ -52,30 +73,44 @@ def test_cleanup_tables_filters_age_and_installed_questionnaires(monkeypatch):
     statements = cursor.execute.call_args_list
     assert "SET time_zone" in statements[0].args[0]
     assert statements[1].args == (
-        "DELETE FROM `CMA_Logging_Form` WHERE `TimeCreated` < %s",
-        (cutoff,),
+        "SELECT * FROM `CMA_Logging_Form` WHERE `TimeCreated` < %s "
+        "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+        (cutoff, cutoff),
     )
     for call, table in zip(statements[2:], main.QUESTIONNAIRE_TABLES, strict=True):
         assert call.args == (
-            f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
-            "AND `MainSurveyId` NOT IN (%s, %s)",
-            (cutoff, "SurveyA", "SurveyB"),
+            f"SELECT * FROM `{table}` WHERE `TimeCreated` < %s "
+            "AND (`MainSurveyID` IS NULL OR `MainSurveyID` NOT IN (%s, %s))",
+            (cutoff, "guid-a", "guid-b"),
         )
-    connection.commit.assert_called_once()
+    connector.connect.assert_called_once_with(
+            "test-project:europe-west2:test-instance",
+        "pymysql",
+        user="cleanup-service-account",
+        db="blaise",
+        charset="utf8mb4",
+        ip_type="public",
+    )
+    assert cursor.fetchall.call_count == 3
+    assert capsys.readouterr().out.count("matching rows (2)") == 3
+    assert "{'RecordId': 1}" in capsys.readouterr().out
+    connection.commit.assert_not_called()
     connection.close.assert_called_once()
 
 
-def test_cleanup_rolls_back_if_a_delete_fails(monkeypatch):
+def test_cleanup_tables_refuses_empty_questionnaire_list():
+    with pytest.raises(ValueError, match="No installed questionnaire GUIDs"):
+        main.cleanup_tables(set(), datetime(2026, 7, 4))
+
+
+def test_cleanup_rolls_back_if_a_preview_query_fails(monkeypatch):
+    _set_database_environment(monkeypatch)
     cursor = MagicMock()
     cursor.execute.side_effect = [None, None, RuntimeError("database failed")]
-    connection = MagicMock()
-    connection.cursor.return_value.__enter__.return_value = cursor
-    monkeypatch.setattr(main.pymysql, "connect", MagicMock(return_value=connection))
-    monkeypatch.setenv("DATABASE_USER", "test")
-    monkeypatch.setenv("DATABASE_PASSWORD", "test")
+    _, connection = _mock_connector(monkeypatch, cursor)
 
     with pytest.raises(RuntimeError, match="database failed"):
-        main.cleanup_tables({"SurveyA"}, datetime(2026, 7, 4))
+        main.cleanup_tables({"guid-a"}, datetime(2026, 7, 4))
 
     connection.rollback.assert_called_once()
     connection.commit.assert_not_called()
@@ -84,7 +119,9 @@ def test_cleanup_rolls_back_if_a_delete_fails(monkeypatch):
 
 def test_handler_does_not_delete_when_questionnaire_fetch_fails(monkeypatch):
     monkeypatch.setattr(
-        main, "installed_questionnaires", lambda: (_ for _ in ()).throw(ValueError())
+        main,
+        "installed_questionnaire_guids",
+        lambda: (_ for _ in ()).throw(ValueError()),
     )
     cleanup = MagicMock()
     monkeypatch.setattr(main, "cleanup_tables", cleanup)
@@ -96,7 +133,7 @@ def test_handler_does_not_delete_when_questionnaire_fetch_fails(monkeypatch):
 
 def test_handler_rejects_get_without_fetching(monkeypatch):
     fetch = MagicMock()
-    monkeypatch.setattr(main, "installed_questionnaires", fetch)
+    monkeypatch.setattr(main, "installed_questionnaire_guids", fetch)
 
     assert main.cma_database_cleanup(MagicMock(method="GET")) == (
         "Method not allowed",
@@ -105,8 +142,9 @@ def test_handler_rejects_get_without_fetching(monkeypatch):
     fetch.assert_not_called()
 
 
-def test_handler_uses_90_day_cutoff(monkeypatch):
-    monkeypatch.setattr(main, "installed_questionnaires", lambda: {"SurveyA"})
+def test_handler_uses_configured_cutoff(monkeypatch):
+    monkeypatch.setenv("CMA_TIME_THRESHOLD", "45")
+    monkeypatch.setattr(main, "installed_questionnaire_guids", lambda: {"guid-a"})
     cleanup = MagicMock(return_value={})
     monkeypatch.setattr(main, "cleanup_tables", cleanup)
     before = main.datetime.now(main.UTC)
@@ -115,6 +153,19 @@ def test_handler_uses_90_day_cutoff(monkeypatch):
 
     after = main.datetime.now(main.UTC)
     names, cutoff = cleanup.call_args.args
-    assert names == {"SurveyA"}
-    assert before - main.timedelta(days=90) <= cutoff.replace(tzinfo=main.UTC)
-    assert cutoff.replace(tzinfo=main.UTC) <= after - main.timedelta(days=90)
+    assert names == {"guid-a"}
+    assert before - main.timedelta(days=45) <= cutoff.replace(tzinfo=main.UTC)
+    assert cutoff.replace(tzinfo=main.UTC) <= after - main.timedelta(days=45)
+
+
+def test_handler_rejects_nonpositive_retention_threshold(monkeypatch):
+    monkeypatch.setenv("CMA_TIME_THRESHOLD", "0")
+    monkeypatch.setattr(main, "installed_questionnaire_guids", lambda: {"guid-a"})
+    cleanup = MagicMock()
+    monkeypatch.setattr(main, "cleanup_tables", cleanup)
+
+    assert main.cma_database_cleanup(MagicMock(method="POST")) == (
+        "Cleanup failed",
+        500,
+    )
+    cleanup.assert_not_called()

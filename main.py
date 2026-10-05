@@ -1,77 +1,95 @@
 import logging
-import os
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 
 import flask
-import pymysql
-import requests
+
+from config import Settings
+from models.blaise_config_model import BlaiseConfig
+from services.blaise_service import BlaiseService
 
 LOGGER = logging.getLogger(__name__)
-RETENTION_DAYS = 90
 QUESTIONNAIRE_TABLES = ("CMA_Launcher_Form", "CMA_Attempts_Form")
 LOGGING_TABLE = "CMA_Logging_Form"
 
 
-def installed_questionnaires() -> set[str]:
-    url = os.environ["QUESTIONNAIRES_URL"]
-    headers = {}
-    if token := os.environ.get("QUESTIONNAIRES_BEARER_TOKEN"):
-        headers["Authorization"] = f"Bearer {token}"
-
-    response = requests.get(url, headers=headers, timeout=15)
-    response.raise_for_status()
-    payload = response.json()
-    if isinstance(payload, dict):
-        payload = payload.get("questionnaires")
-    if not isinstance(payload, list):
-        raise ValueError("Questionnaire API did not return a list")
-
-    names: set[str] = set()
-    for item in payload:
-        name = item.get("name") if isinstance(item, dict) else item
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Questionnaire API returned an invalid name")
-        names.add(name)
-    if not names:
-        raise ValueError("Questionnaire API returned no installed questionnaires")
-    return names
+def installed_questionnaire_guids() -> set[str]:
+    service = BlaiseService(BlaiseConfig.from_env())
+    return set(service.get_guid_of_questionnaire_in_blaise())
 
 
-def cleanup_tables(names: set[str], cutoff: datetime) -> dict[str, int]:
-    connection = pymysql.connect(
-        host=os.environ.get("DATABASE_HOST", "localhost"),
-        port=int(os.environ.get("DATABASE_PORT", "3306")),
-        unix_socket=os.environ.get("DATABASE_SOCKET"),
-        user=os.environ["DATABASE_USER"],
-        password=os.environ["DATABASE_PASSWORD"],
-        database="blaise",
-        charset="utf8mb4",
-        autocommit=False,
+def _cloud_sql_connection_name() -> str:
+    return ":".join(
+        (Settings.PROJECT_ID, Settings.SQL_REGION, Settings.SQL_INSTANCE_NAME)
     )
-    deleted: dict[str, int] = {}
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SET time_zone = '+00:00'")
-            cursor.execute(
-                f"DELETE FROM `{LOGGING_TABLE}` WHERE `TimeCreated` < %s",
-                (cutoff,),
-            )
-            deleted[LOGGING_TABLE] = cursor.rowcount
-            placeholders = ", ".join(["%s"] * len(names))
-            for table in QUESTIONNAIRE_TABLES:
+
+
+def _create_cloud_sql_connector():
+    connector_class = import_module("google.cloud.sql.connector").Connector
+    return connector_class(enable_iam_auth=True, refresh_strategy="lazy")
+
+
+def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
+    if not guids:
+        raise ValueError("No installed questionnaire GUIDs; refusing to delete data")
+
+    previewed: dict[str, int] = {}
+    placeholders = ", ".join(["%s"] * len(guids))
+    with _create_cloud_sql_connector() as connector:
+        connection = connector.connect(
+            _cloud_sql_connection_name(),
+            "pymysql",
+            user=Settings.DATABASE_USER,
+            db="blaise",
+            charset="utf8mb4",
+            ip_type=Settings.SQL_IP_TYPE,
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SET time_zone = '+00:00'")
+                # cursor.execute(
+                #     f"DELETE FROM `{LOGGING_TABLE}` "
+                #     "WHERE `TimeCreated` < %s "
+                #     "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+                #     (cutoff, cutoff),
+                # )
                 cursor.execute(
-                    f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
-                    f"AND `MainSurveyId` NOT IN ({placeholders})",
-                    (cutoff, *sorted(names)),
+                    f"SELECT * FROM `{LOGGING_TABLE}` "
+                    "WHERE `TimeCreated` < %s "
+                    "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+                    (cutoff, cutoff),
                 )
-                deleted[table] = cursor.rowcount
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-    return deleted
+                rows = [
+                    dict(zip((column[0] for column in cursor.description), row, strict=True))
+                    for row in cursor.fetchall()
+                ]
+                print(f"{LOGGING_TABLE} matching rows ({len(rows)}): {rows}")
+                previewed[LOGGING_TABLE] = len(rows)
+                for table in QUESTIONNAIRE_TABLES:
+                    # cursor.execute(
+                    #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
+                    #     f"AND (`MainSurveyID` IS NULL OR "
+                    #     f"`MainSurveyID` NOT IN ({placeholders}))",
+                    #     (cutoff, *sorted(guids)),
+                    # )
+                    cursor.execute(
+                        f"SELECT * FROM `{table}` WHERE `TimeCreated` < %s "
+                        f"AND (`MainSurveyID` IS NULL OR "
+                        f"`MainSurveyID` NOT IN ({placeholders}))",
+                        (cutoff, *sorted(guids)),
+                    )
+                    rows = [
+                        dict(zip((column[0] for column in cursor.description), row, strict=True))
+                        for row in cursor.fetchall()
+                    ]
+                    print(f"{table} matching rows ({len(rows)}): {rows}")
+                    previewed[table] = len(rows)
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+    return previewed
 
 
 def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
@@ -79,12 +97,17 @@ def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
     if request.method != "POST":
         return "Method not allowed", 405
     try:
-        names = installed_questionnaires()
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=RETENTION_DAYS)
-        deleted = cleanup_tables(names, cutoff)
+        guids = installed_questionnaire_guids()
+        threshold = Settings.CMA_TIME_THRESHOLD
+        if threshold <= 0:
+            raise ValueError("CMA_TIME_THRESHOLD must be greater than zero")
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=threshold)
+        previewed = cleanup_tables(guids, cutoff)
     except Exception:
         LOGGER.exception("CMA cleanup failed")
         return "Cleanup failed", 500
 
-    LOGGER.info("CMA cleanup completed; deleted=%s", deleted)
+    
+    print(f"CMA cleanup preview completed; matching_rows={previewed}")
+    LOGGER.info("CMA cleanup preview completed; matching_rows=%s", previewed)
     return "OK", 200

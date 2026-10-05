@@ -1,31 +1,27 @@
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
 [tool.poetry]
 package-mode = false
 
 [project]
 name = "blaise-cleanup-databases"
-requires-python = ">=3.13,<4.0"
-dependencies = [
-	"functions-framework>=3.10.2",
-	"flask (>=3.1.3)",
-	"requests>=2.34.2",
-	"pymysql>=1.1,<2",
-]
 
-[dependency-groups]
-dev = [
-	"pytest>=9.1.1",
-	"mock>=5.2.0",
-	"ruff (>=0.15.22)",
-	"pyright>=1.1.411",
-	"vulture>=2.16",
-	"mock-alchemy>=0.2.6",
-	"pytest-cov>=7.1.0",
-	"deptry>=0.25.1",
-]
+[tool.poetry.dependencies]
+python = "^3.13"
+functions-framework = "^3.10.2"
+flask = "^3.1.3"
+requests = "^2.34.2"
+pymysql = "^1.1"
+blaise-restapi = {git = "https://github.com/ONSdigital/blaise-api-python-client", rev = "v1.0.2"}
+cloud-sql-python-connector = {version = "^1.22.0", extras = ["pymysql"]}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+mock = "^5.2.0"
+ruff = "^0.15.22"
+pyright = "^1.1.411"
+vulture = "^2.16"
+mock-alchemy = "^0.2.6"
+pytest-cov = "^7.1.0"
+deptry = "^0.25.1"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "PL", "C90", "SIM", "RUF", "Q"]
@@ -46,3 +42,7 @@ addopts = "--cov=. --cov-report=term-missing"
 
 [tool.coverage.report]
 omit = ["tests/*"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
