@@ -10,24 +10,20 @@ def _required_environment_variable(name: str) -> str:
 
 class SettingsMeta(type):
     @property
-    def PROJECT_ID(cls) -> str:
-        return _required_environment_variable("PROJECT_ID")
-
-    @property
-    def SQL_REGION(cls) -> str:
-        return _required_environment_variable("SQL_REGION")
-
-    @property
-    def SQL_INSTANCE_NAME(cls) -> str:
-        return _required_environment_variable("SQL_INSTANCE_NAME")
-
-    @property
     def DATABASE_USER(cls) -> str:
         return _required_environment_variable("DATABASE_USER")
 
     @property
-    def SQL_IP_TYPE(cls) -> str:
-        return os.getenv("SQL_IP_TYPE", "public").strip().lower()
+    def DATABASE_PASSWORD(cls) -> str:
+        return _required_environment_variable("DATABASE_PASSWORD")
+
+    @property
+    def DATABASE_IP_ADDRESS(cls) -> str:
+        return _required_environment_variable("DATABASE_IP_ADDRESS")
+
+    @property
+    def DATABASE_PORT(cls) -> int:
+        return int(_required_environment_variable("DATABASE_PORT"))
 
     @property
     def SERVER_PARK(cls) -> str:

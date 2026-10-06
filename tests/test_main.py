@@ -7,21 +7,17 @@ import main
 
 
 def _set_database_environment(monkeypatch):
-    monkeypatch.setenv("PROJECT_ID", "test-project")
-    monkeypatch.setenv("SQL_REGION", "europe-west2")
-    monkeypatch.setenv("SQL_INSTANCE_NAME", "test-instance")
+    monkeypatch.setenv("DATABASE_IP_ADDRESS", "10.0.0.5")
+    monkeypatch.setenv("DATABASE_PORT", "3306")
     monkeypatch.setenv("DATABASE_USER", "cleanup-service-account")
+    monkeypatch.setenv("DATABASE_PASSWORD", "secret-password")
 
 
-def _mock_connector(monkeypatch, cursor):
+def _mock_connection(monkeypatch, cursor):
     connection = MagicMock()
     connection.cursor.return_value.__enter__.return_value = cursor
-    connector = MagicMock()
-    connector.connect.return_value = connection
-    context = MagicMock()
-    context.__enter__.return_value = connector
-    monkeypatch.setattr(main, "_create_cloud_sql_connector", lambda: context)
-    return connector, connection
+    monkeypatch.setattr(main.pymysql, "connect", MagicMock(return_value=connection))
+    return connection
 
 
 def test_installed_questionnaire_guids_uses_blaise_service(monkeypatch):
@@ -40,27 +36,12 @@ def test_installed_questionnaire_guids_uses_blaise_service(monkeypatch):
     service.get_guid_of_questionnaire_in_blaise.assert_called_once_with()
 
 
-def test_cloud_sql_connector_enables_iam_auth(monkeypatch):
-    connector_class = MagicMock()
-    module = MagicMock(Connector=connector_class)
-    importer = MagicMock(return_value=module)
-    monkeypatch.setattr(main, "import_module", importer)
-
-    main._create_cloud_sql_connector()
-
-    importer.assert_called_once_with("google.cloud.sql.connector")
-    connector_class.assert_called_once_with(
-        enable_iam_auth=True,
-        refresh_strategy="lazy",
-    )
-
-
 def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
     _set_database_environment(monkeypatch)
     cursor = MagicMock()
     cursor.description = (("RecordId",),)
     cursor.fetchall.return_value = [(1,), (2,)]
-    connector, connection = _mock_connector(monkeypatch, cursor)
+    connection = _mock_connection(monkeypatch, cursor)
     cutoff = datetime(2026, 7, 4)
 
     previewed = main.cleanup_tables({"guid-b", "guid-a"}, cutoff)
@@ -83,13 +64,13 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
             "AND (`MainSurveyID` IS NULL OR `MainSurveyID` NOT IN (%s, %s))",
             (cutoff, "guid-a", "guid-b"),
         )
-    connector.connect.assert_called_once_with(
-            "test-project:europe-west2:test-instance",
-        "pymysql",
+    main.pymysql.connect.assert_called_once_with(
+        host="10.0.0.5",
+        port=3306,
         user="cleanup-service-account",
-        db="blaise",
+        password="secret-password",
+        database="blaise",
         charset="utf8mb4",
-        ip_type="public",
     )
     assert cursor.fetchall.call_count == 3
     output = capsys.readouterr().out
@@ -108,7 +89,7 @@ def test_cleanup_rolls_back_if_a_preview_query_fails(monkeypatch):
     _set_database_environment(monkeypatch)
     cursor = MagicMock()
     cursor.execute.side_effect = [None, None, RuntimeError("database failed")]
-    _, connection = _mock_connector(monkeypatch, cursor)
+    connection = _mock_connection(monkeypatch, cursor)
 
     with pytest.raises(RuntimeError, match="database failed"):
         main.cleanup_tables({"guid-a"}, datetime(2026, 7, 4))

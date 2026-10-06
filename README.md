@@ -12,20 +12,16 @@ body is ignored. Configure the following environment variables:
 | `BLAISE_API_URL` | Blaise REST API host used by `blaise-restapi` |
 | `SERVER_PARK` | Blaise server park queried for installed questionnaire GUIDs |
 | `CMA_TIME_THRESHOLD` | Positive retention period in days |
-| `PROJECT_ID` | Google Cloud project containing the Cloud SQL instance |
-| `SQL_REGION` | Cloud SQL instance region |
-| `SQL_INSTANCE_NAME` | Cloud SQL instance ID |
-| `DATABASE_USER` | Cloud SQL IAM database user for the function's service account |
-| `SQL_IP_TYPE` | Optional connector IP type (`public`, `private`, or `psc`); defaults to `public` |
+| `DATABASE_IP_ADDRESS` | Private IP address of the Cloud SQL instance |
+| `DATABASE_PORT` | MySQL port on the Cloud SQL instance (usually `3306`) |
+| `DATABASE_USER` | MySQL database user |
+| `DATABASE_PASSWORD` | MySQL password, exposed to the function from Secret Manager |
 
-The function uses Application Default Credentials through the Cloud SQL Python
-Connector with automatic IAM database authentication. Do not configure a database
-password. Enable the Cloud SQL Admin API, enable IAM database authentication on
-the instance, create the IAM database user, and grant the function's service
-account the Cloud SQL Client and Cloud SQL Instance User roles. For MySQL IAM
-service-account users, `DATABASE_USER` is the service account name without
-`@project-id.iam.gserviceaccount.com`. Private IP or PSC also requires the
-function to have network access to that instance.
+The function connects directly to the Cloud SQL private IP using MySQL password
+authentication. Configure `DATABASE_PASSWORD` as a Secret Manager-backed
+environment variable and grant the function's service account access to that
+secret. The function must also have VPC network access and firewall connectivity
+to the Cloud SQL instance on the configured port.
 
 An empty questionnaire GUID list stops cleanup to avoid deleting all old
 questionnaire records. The function deletes `CMA_Launcher_Form` and
@@ -76,10 +72,10 @@ Example `.env` file:
 
 ```ini
 BLAISE_API_URL=localhost:8080
-PROJECT_ID=ons-blaise-v2-dev-sandbox123
 SERVER_PARK=gusty
-SQL_INSTANCE_NAME='blaise-dev-ef8bfb2b'
-SQL_REGION='europe-west2'
-DATABASE_USER='ons-blaise-v2-dev'
+DATABASE_IP_ADDRESS='10.0.0.5'
+DATABASE_PORT='3306'
+DATABASE_USER='blaise-cleanup'
+DATABASE_PASSWORD='configure-from-secret-manager'
 CMA_TIME_THRESHOLD='90'
 ```

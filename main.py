@@ -1,8 +1,8 @@
 import logging
 from datetime import UTC, datetime, timedelta
-from importlib import import_module
 
 import flask
+import pymysql
 
 from config import Settings
 from models.blaise_config_model import BlaiseConfig
@@ -18,77 +18,65 @@ def installed_questionnaire_guids() -> set[str]:
     return set(service.get_guid_of_questionnaire_in_blaise())
 
 
-def _cloud_sql_connection_name() -> str:
-    return ":".join(
-        (Settings.PROJECT_ID, Settings.SQL_REGION, Settings.SQL_INSTANCE_NAME)
-    )
-
-
-def _create_cloud_sql_connector():
-    connector_class = import_module("google.cloud.sql.connector").Connector
-    return connector_class(enable_iam_auth=True, refresh_strategy="lazy")
-
-
 def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
     if not guids:
         raise ValueError("No installed questionnaire GUIDs; refusing to delete data")
 
     previewed: dict[str, int] = {}
     placeholders = ", ".join(["%s"] * len(guids))
-    with _create_cloud_sql_connector() as connector:
-        connection = connector.connect(
-            _cloud_sql_connection_name(),
-            "pymysql",
-            user=Settings.DATABASE_USER,
-            db="blaise",
-            charset="utf8mb4",
-            ip_type=Settings.SQL_IP_TYPE,
-        )
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SET time_zone = '+00:00'")
+    connection = pymysql.connect(
+        host=Settings.DATABASE_IP_ADDRESS,
+        port=Settings.DATABASE_PORT,
+        user=Settings.DATABASE_USER,
+        password=Settings.DATABASE_PASSWORD,
+        database="blaise",
+        charset="utf8mb4",
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET time_zone = '+00:00'")
+            # cursor.execute(
+            #     f"DELETE FROM `{LOGGING_TABLE}` "
+            #     "WHERE `TimeCreated` < %s "
+            #     "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+            #     (cutoff, cutoff),
+            # )
+            cursor.execute(
+                f"SELECT * FROM `{LOGGING_TABLE}` "
+                "WHERE `TimeCreated` < %s "
+                "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+                (cutoff, cutoff),
+            )
+            rows = [
+                dict(zip((column[0] for column in cursor.description), row, strict=True))
+                for row in cursor.fetchall()
+            ]
+            print(f"{LOGGING_TABLE} matching rows ({len(rows)}): {rows}")
+            previewed[LOGGING_TABLE] = len(rows)
+            for table in QUESTIONNAIRE_TABLES:
                 # cursor.execute(
-                #     f"DELETE FROM `{LOGGING_TABLE}` "
-                #     "WHERE `TimeCreated` < %s "
-                #     "AND (`LastModified` IS NULL OR `LastModified` < %s)",
-                #     (cutoff, cutoff),
+                #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
+                #     f"AND (`MainSurveyID` IS NULL OR "
+                #     f"`MainSurveyID` NOT IN ({placeholders}))",
+                #     (cutoff, *sorted(guids)),
                 # )
                 cursor.execute(
-                    f"SELECT * FROM `{LOGGING_TABLE}` "
-                    "WHERE `TimeCreated` < %s "
-                    "AND (`LastModified` IS NULL OR `LastModified` < %s)",
-                    (cutoff, cutoff),
+                    f"SELECT * FROM `{table}` WHERE `TimeCreated` < %s "
+                    f"AND (`MainSurveyID` IS NULL OR "
+                    f"`MainSurveyID` NOT IN ({placeholders}))",
+                    (cutoff, *sorted(guids)),
                 )
                 rows = [
                     dict(zip((column[0] for column in cursor.description), row, strict=True))
                     for row in cursor.fetchall()
                 ]
-                print(f"{LOGGING_TABLE} matching rows ({len(rows)}): {rows}")
-                previewed[LOGGING_TABLE] = len(rows)
-                for table in QUESTIONNAIRE_TABLES:
-                    # cursor.execute(
-                    #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
-                    #     f"AND (`MainSurveyID` IS NULL OR "
-                    #     f"`MainSurveyID` NOT IN ({placeholders}))",
-                    #     (cutoff, *sorted(guids)),
-                    # )
-                    cursor.execute(
-                        f"SELECT * FROM `{table}` WHERE `TimeCreated` < %s "
-                        f"AND (`MainSurveyID` IS NULL OR "
-                        f"`MainSurveyID` NOT IN ({placeholders}))",
-                        (cutoff, *sorted(guids)),
-                    )
-                    rows = [
-                        dict(zip((column[0] for column in cursor.description), row, strict=True))
-                        for row in cursor.fetchall()
-                    ]
-                    print(f"{table} matching rows ({len(rows)}): {rows}")
-                    previewed[table] = len(rows)
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                print(f"{table} matching rows ({len(rows)}): {rows}")
+                previewed[table] = len(rows)
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
     return previewed
 
 
