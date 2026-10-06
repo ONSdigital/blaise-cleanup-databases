@@ -55,7 +55,7 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
     assert "SET time_zone" in statements[0].args[0]
     assert statements[1].args == (
         "SELECT * FROM `CMA_Logging_Form` WHERE `TimeCreated` < %s "
-        "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+        "AND (`LastModification` IS NULL OR `LastModification` < %s)",
         (cutoff, cutoff),
     )
     for call, table in zip(statements[2:], main.QUESTIONNAIRE_TABLES, strict=True):
