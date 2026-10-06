@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-import blaise_restapi
+import blaise_restapi  # type: ignore[reportMissingTypeStubs]
 
 from models.blaise_config_model import BlaiseConfig
 

@@ -16,8 +16,9 @@ def _set_database_environment(monkeypatch):
 def _mock_connection(monkeypatch, cursor):
     connection = MagicMock()
     connection.cursor.return_value.__enter__.return_value = cursor
-    monkeypatch.setattr(main.pymysql, "connect", MagicMock(return_value=connection))
-    return connection
+    connect = MagicMock(return_value=connection)
+    monkeypatch.setattr(main.pymysql, "connect", connect)
+    return connection, connect
 
 
 def test_installed_questionnaire_guids_uses_blaise_service(monkeypatch):
@@ -41,7 +42,7 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
     cursor = MagicMock()
     cursor.description = (("RecordId",),)
     cursor.fetchall.return_value = [(1,), (2,)]
-    connection = _mock_connection(monkeypatch, cursor)
+    connection, connect = _mock_connection(monkeypatch, cursor)
     cutoff = datetime(2026, 7, 4)
 
     previewed = main.cleanup_tables({"guid-b", "guid-a"}, cutoff)
@@ -65,7 +66,7 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
             "AND (`MainSurveyID` IS NULL OR `MainSurveyID` NOT IN (%s, %s))",
             (cutoff, "guid-a", "guid-b"),
         )
-    main.pymysql.connect.assert_called_once_with(
+    connect.assert_called_once_with(
         host="10.0.0.5",
         port=3306,
         user="cleanup-service-account",
@@ -90,7 +91,7 @@ def test_cleanup_rolls_back_if_a_preview_query_fails(monkeypatch):
     _set_database_environment(monkeypatch)
     cursor = MagicMock()
     cursor.execute.side_effect = [None, None, RuntimeError("database failed")]
-    connection = _mock_connection(monkeypatch, cursor)
+    connection, _ = _mock_connection(monkeypatch, cursor)
 
     with pytest.raises(RuntimeError, match="database failed"):
         main.cleanup_tables({"guid-a"}, datetime(2026, 7, 4))
