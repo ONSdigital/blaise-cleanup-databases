@@ -48,7 +48,13 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
                 (cutoff, cutoff),
             )
             rows = [
-                dict(zip((column[0] for column in cursor.description), row, strict=True))
+                dict(
+                    zip(
+                        (column[0] for column in cursor.description),
+                        row,
+                        strict=True,
+                    )
+                )
                 for row in cursor.fetchall()
             ]
             print(f"{LOGGING_TABLE} matching rows ({len(rows)}): {rows}")
@@ -67,7 +73,13 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
                     (cutoff, *sorted(guids)),
                 )
                 rows = [
-                    dict(zip((column[0] for column in cursor.description), row, strict=True))
+                    dict(
+                        zip(
+                            (column[0] for column in cursor.description),
+                            row,
+                            strict=True,
+                        )
+                    )
                     for row in cursor.fetchall()
                 ]
                 print(f"{table} matching rows ({len(rows)}): {rows}")
@@ -95,7 +107,6 @@ def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
         LOGGER.exception("CMA cleanup failed")
         return "Cleanup failed", 500
 
-    
     print(f"CMA cleanup preview completed; matching_rows={previewed}")
     LOGGER.info("CMA cleanup preview completed; matching_rows=%s", previewed)
     return "OK", 200

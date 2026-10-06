@@ -53,6 +53,7 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
     }
     statements = cursor.execute.call_args_list
     assert "SET time_zone" in statements[0].args[0]
+    expected_preview_count = len(main.QUESTIONNAIRE_TABLES) + 1
     assert statements[1].args == (
         "SELECT * FROM `CMA_Logging_Form` WHERE `TimeCreated` < %s "
         "AND (`LastModification` IS NULL OR `LastModification` < %s)",
@@ -72,9 +73,9 @@ def test_cleanup_tables_previews_only_eligible_records(monkeypatch, capsys):
         database="blaise",
         charset="utf8mb4",
     )
-    assert cursor.fetchall.call_count == 3
+    assert cursor.fetchall.call_count == expected_preview_count
     output = capsys.readouterr().out
-    assert output.count("matching rows (2)") == 3
+    assert output.count("matching rows (2)") == expected_preview_count
     assert "{'RecordId': 1}" in output
     connection.commit.assert_not_called()
     connection.close.assert_called_once()
