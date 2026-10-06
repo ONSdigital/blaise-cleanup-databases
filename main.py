@@ -38,13 +38,13 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
             # cursor.execute(
             #     f"DELETE FROM `{LOGGING_TABLE}` "
             #     "WHERE `TimeCreated` < %s "
-            #     "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+            #     "AND (`LastModification` IS NULL OR `LastModification` < %s)",
             #     (cutoff, cutoff),
             # )
             cursor.execute(
                 f"SELECT * FROM `{LOGGING_TABLE}` "
                 "WHERE `TimeCreated` < %s "
-                "AND (`LastModified` IS NULL OR `LastModified` < %s)",
+                "AND (`LastModification` IS NULL OR `LastModification` < %s)",
                 (cutoff, cutoff),
             )
             rows = [
