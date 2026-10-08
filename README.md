@@ -28,7 +28,7 @@ questionnaire records. The function deletes `CMA_Launcher_Form` and
 `CMA_Attempts_Form` rows only when `TimeCreated` is older than the configured
 threshold and `MainSurveyId` is not installed; NULL IDs are treated as absent.
 It deletes `CMA_Logging_Form` rows only when both `TimeCreated` and
-`LastModified` are older than the threshold; NULL `LastModified` values are
+`LastModification` are older than the threshold; NULL `LastModification` values are
 treated as not recently modified. The cutoff and MySQL session use UTC. All three
 deletes run in one transaction, and the function logs deleted row counts.
 
