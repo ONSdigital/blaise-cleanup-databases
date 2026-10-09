@@ -44,12 +44,9 @@ poetry install
 
 ### Authenticate with Google Cloud (keyless)
 
-Use service account impersonation to auth with BIMS and BUS.
-
 ```shell
 gcloud auth login
 gcloud config set project ons-blaise-v2-dev
-gcloud auth application-default login --impersonate-service-account=ons-blaise-v2-dev@appspot.gserviceaccount.com
 ```
 
 ### Start an IAP tunnel to Blaise REST API
@@ -75,7 +72,7 @@ BLAISE_API_URL=localhost:8080
 SERVER_PARK=gusty
 DATABASE_IP_ADDRESS='10.0.0.5'
 DATABASE_PORT='3306'
-DATABASE_USER='blaise-cleanup'
+DATABASE_USER='blaise'
 DATABASE_PASSWORD='configure-from-secret-manager'
 CMA_TIME_THRESHOLD='90'
 ```
