@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Spec driven dev
+agents.md
+
 # Distribution / packaging
 .Python
 build/
