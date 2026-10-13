@@ -62,7 +62,7 @@ def test_ips_questionnaire_guids_match_name_prefix(monkeypatch, caplog):
 
 
 def test_cleanup_tables_previews_only_eligible_records(monkeypatch, caplog):
-    caplog.set_level("INFO", logger=main.LOGGER.name)
+    caplog.set_level("INFO")
     _set_database_environment(monkeypatch)
     cursor = MagicMock()
     cursor.fetchone.return_value = (2,)

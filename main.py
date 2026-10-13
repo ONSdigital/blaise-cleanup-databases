@@ -8,9 +8,10 @@ import pymysql
 from config import Settings
 from models.blaise_config_model import BlaiseConfig
 from services.blaise_service import BlaiseService
+from util.service_logging import setupLogging
 
-logging.basicConfig(level=logging.INFO)
-LOGGER = logging.getLogger(__name__)
+setupLogging()
+
 QUESTIONNAIRE_TABLES = ("CMA_Launcher_Form", "CMA_Attempts_Form")
 LOGGING_TABLE = "CMA_Logging_Form"
 
@@ -50,7 +51,7 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> None:
             )
             result = cursor.fetchone()
             count = result[0] if result is not None else 0
-            LOGGER.info(f"There are {count} eligible records in {LOGGING_TABLE} to be deleted!")
+            logging.info(f"There are {count} eligible records in {LOGGING_TABLE} to be deleted!")
             for table in QUESTIONNAIRE_TABLES:
                 # cursor.execute(
                 #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
@@ -66,7 +67,7 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> None:
                 )
                 result = cursor.fetchone()
                 count = result[0] if result is not None else 0
-                LOGGER.info(f"There are {count} eligible records in {table} to be deleted!")
+                logging.info(f"There are {count} eligible records in {table} to be deleted!")
     except Exception:
         connection.rollback()
         raise
@@ -86,8 +87,8 @@ def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=threshold)
         cleanup_tables(guids, cutoff)
     except Exception:
-        LOGGER.exception("CMA cleanup failed")
+        logging.exception("CMA cleanup failed")
         return "CMA cleanup failed", 500
 
-    LOGGER.info("CMA cleanup completed")
+    logging.info("CMA cleanup completed")
     return "OK", 200
