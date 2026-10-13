@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime, timedelta
+from unittest import result
 
 import flask
 import pymysql
@@ -15,15 +16,14 @@ LOGGING_TABLE = "CMA_Logging_Form"
 
 def installed_questionnaire_guids() -> set[str]:
     service = BlaiseService(BlaiseConfig.from_env())
-    return set(service.get_guid_of_questionnaire_in_blaise())
+    return set(service.get_guid_of_ips_questionnaire_in_blaise())
 
 
-def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
+def cleanup_tables(guids: set[str], cutoff: datetime) -> None:
     if not guids:
         raise ValueError("No installed questionnaire GUIDs; refusing to delete data")
 
-    previewed: dict[str, int] = {}
-    placeholders = ", ".join(["%s"] * len(guids))
+    questionnaire_guids = ", ".join(["%s"] * len(guids))
     connection = pymysql.connect(
         host=Settings.DATABASE_IP_ADDRESS,
         port=Settings.DATABASE_PORT,
@@ -42,23 +42,14 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
             #     (cutoff, cutoff),
             # )
             cursor.execute(
-                f"SELECT * FROM `{LOGGING_TABLE}` "
+                f"SELECT COUNT(*) FROM `{LOGGING_TABLE}` "
                 "WHERE `TimeCreated` < %s "
                 "AND (`LastModification` IS NULL OR `LastModification` < %s)",
                 (cutoff, cutoff),
             )
-            rows = [
-                dict(
-                    zip(
-                        (column[0] for column in cursor.description),
-                        row,
-                        strict=True,
-                    )
-                )
-                for row in cursor.fetchall()
-            ]
-            print(f"{LOGGING_TABLE} matching rows ({len(rows)}): {rows}")
-            previewed[LOGGING_TABLE] = len(rows)
+            result = cursor.fetchone()
+            count = result[0] if result is not None else 0
+            LOGGER.info(f"There are {count} eligible records in {LOGGING_TABLE} to be deleted!")
             for table in QUESTIONNAIRE_TABLES:
                 # cursor.execute(
                 #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
@@ -67,29 +58,19 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> dict[str, int]:
                 #     (cutoff, *sorted(guids)),
                 # )
                 cursor.execute(
-                    f"SELECT * FROM `{table}` WHERE `TimeCreated` < %s "
+                    f"SELECT COUNT(*) FROM `{table}` WHERE `TimeCreated` < %s "
                     f"AND (`MainSurveyID` IS NULL OR "
-                    f"`MainSurveyID` NOT IN ({placeholders}))",
+                    f"`MainSurveyID` NOT IN ({questionnaire_guids}))",
                     (cutoff, *sorted(guids)),
                 )
-                rows = [
-                    dict(
-                        zip(
-                            (column[0] for column in cursor.description),
-                            row,
-                            strict=True,
-                        )
-                    )
-                    for row in cursor.fetchall()
-                ]
-                print(f"{table} matching rows ({len(rows)}): {rows}")
-                previewed[table] = len(rows)
+                result = cursor.fetchone()
+                count = result[0] if result is not None else 0
+                LOGGER.info(f"There are {count} eligible records in {table} to be deleted!")
     except Exception:
         connection.rollback()
         raise
     finally:
         connection.close()
-    return previewed
 
 
 def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
@@ -102,11 +83,10 @@ def cma_database_cleanup(request: flask.Request) -> tuple[str, int]:
         if threshold <= 0:
             raise ValueError("CMA_TIME_THRESHOLD must be greater than zero")
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=threshold)
-        previewed = cleanup_tables(guids, cutoff)
+        cleanup_tables(guids, cutoff)
     except Exception:
         LOGGER.exception("CMA cleanup failed")
-        return "Cleanup failed", 500
+        return "CMA cleanup failed", 500
 
-    print(f"CMA cleanup preview completed; matching_rows={previewed}")
-    LOGGER.info("CMA cleanup preview completed; matching_rows=%s", previewed)
+    LOGGER.info("CMA cleanup completed")
     return "OK", 200
