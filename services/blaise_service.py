@@ -4,8 +4,9 @@ from typing import Any
 import blaise_restapi  # type: ignore[reportMissingTypeStubs]
 
 from models.blaise_config_model import BlaiseConfig
+from util.service_logging import setupLogging
 
-
+setupLogging()
 class BlaiseService:
     def __init__(self, config: BlaiseConfig):
         self._config = config
@@ -26,31 +27,30 @@ class BlaiseService:
             )
             raise error
 
-    def get_guid_of_questionnaire_in_blaise(self) -> list[str]:
+    def get_guid_of_ips_questionnaire_in_blaise(self) -> list[str]:
         questionnaire_guids = []
         questionnaires = self.get_questionnaires()
         for questionnaire in questionnaires:
             if not questionnaire["id"]:
-                print(
+                message = (
                     f"MainSurveyID for {questionnaire['name']} not available. "
                     "This will result in skipping cleanup for this Questionnaire "
                     f": {questionnaire['name']}"
                 )
-                logging.warning(
-                    f"MainSurveyID for {questionnaire['name']} not available. "
-                    "This will result in skipping cleanup for this Questionnaire "
-                    f": {questionnaire['name']}"
+                logging.info(message)
+                continue
+
+            if not questionnaire["name"].startswith("IPS"):
+                message = (
+                    f"Excluding questionnaire {questionnaire['name']} "
+                    "because it is non-IPS"
                 )
+                logging.info(message)
                 continue
 
             questionnaire_guids.append(questionnaire["id"])
-            print(
-                f"MainSurveyID '{questionnaire['id']}' "
-                f"for {questionnaire['name']} added"
-            )
             logging.info(
                 f"MainSurveyID '{questionnaire['id']}' "
                 f"for {questionnaire['name']} added"
             )
-        print(f"Questionnaire GUIDs: {questionnaire_guids}")
         return questionnaire_guids
