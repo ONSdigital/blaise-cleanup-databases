@@ -1,6 +1,5 @@
 import logging
 from datetime import UTC, datetime, timedelta
-from unittest import result
 
 import flask
 import pymysql
@@ -51,7 +50,10 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> None:
             )
             result = cursor.fetchone()
             count = result[0] if result is not None else 0
-            logging.info(f"There are {count} eligible records in {LOGGING_TABLE} to be deleted!")
+            logging.info(
+                f"There are {count} eligible records in "
+                f"{LOGGING_TABLE} to be deleted!"
+            )
             for table in QUESTIONNAIRE_TABLES:
                 # cursor.execute(
                 #     f"DELETE FROM `{table}` WHERE `TimeCreated` < %s "
@@ -67,7 +69,10 @@ def cleanup_tables(guids: set[str], cutoff: datetime) -> None:
                 )
                 result = cursor.fetchone()
                 count = result[0] if result is not None else 0
-                logging.info(f"There are {count} eligible records in {table} to be deleted!")
+                logging.info(
+                    f"There are {count} eligible records in "
+                    f"{table} to be deleted!"
+                )
     except Exception:
         connection.rollback()
         raise
