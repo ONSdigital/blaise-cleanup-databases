@@ -9,6 +9,7 @@ from config import Settings
 from models.blaise_config_model import BlaiseConfig
 from services.blaise_service import BlaiseService
 
+logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 QUESTIONNAIRE_TABLES = ("CMA_Launcher_Form", "CMA_Attempts_Form")
 LOGGING_TABLE = "CMA_Logging_Form"

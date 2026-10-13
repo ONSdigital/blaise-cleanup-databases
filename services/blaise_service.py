@@ -5,7 +5,8 @@ import blaise_restapi  # type: ignore[reportMissingTypeStubs]
 
 from models.blaise_config_model import BlaiseConfig
 
-
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
 class BlaiseService:
     def __init__(self, config: BlaiseConfig):
         self._config = config
@@ -19,7 +20,7 @@ class BlaiseService:
                 self._config.server_park
             )
         except Exception as error:
-            logging.error(
+            LOGGER.error(
                 f"BlaiseService: error in calling "
                 "'get_all_questionnaires_for_server_park': "
                 f"{error}"
@@ -36,7 +37,7 @@ class BlaiseService:
                     "This will result in skipping cleanup for this Questionnaire "
                     f": {questionnaire['name']}"
                 )
-                logging.info(message)
+                LOGGER.info(message)
                 continue
 
             if not questionnaire["name"].startswith("IPS"):
@@ -44,11 +45,11 @@ class BlaiseService:
                     f"Excluding questionnaire {questionnaire['name']} "
                     "because it is non-IPS"
                 )
-                logging.info(message)
+                LOGGER.info(message)
                 continue
 
             questionnaire_guids.append(questionnaire["id"])
-            logging.info(
+            LOGGER.info(
                 f"MainSurveyID '{questionnaire['id']}' "
                 f"for {questionnaire['name']} added"
             )
